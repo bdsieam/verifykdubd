@@ -1,4 +1,5 @@
-CREATE TABLE IF NOT EXISTS student_applications (
+DROP TABLE IF EXISTS student_applications;
+CREATE TABLE student_applications (
   reference_id TEXT PRIMARY KEY,
   full_name TEXT NOT NULL,
   student_id TEXT NOT NULL,
@@ -18,7 +19,8 @@ CREATE TABLE IF NOT EXISTS student_applications (
   custom_fields_json TEXT
 );
 
-CREATE TABLE IF NOT EXISTS representatives (
+DROP TABLE IF EXISTS representatives;
+CREATE TABLE representatives (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   dept_id TEXT NOT NULL,
@@ -30,7 +32,8 @@ CREATE TABLE IF NOT EXISTS representatives (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS rep_accounts (
+DROP TABLE IF EXISTS rep_accounts;
+CREATE TABLE rep_accounts (
   id TEXT PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   password TEXT NOT NULL,
@@ -43,7 +46,8 @@ CREATE TABLE IF NOT EXISTS rep_accounts (
   updated_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS admin_credentials (
+DROP TABLE IF EXISTS admin_credentials;
+CREATE TABLE admin_credentials (
   username TEXT PRIMARY KEY,
   password TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'Admin',
@@ -52,7 +56,8 @@ CREATE TABLE IF NOT EXISTS admin_credentials (
 
 INSERT OR IGNORE INTO admin_credentials (username, password, role, updated_at) VALUES ('admin', 'kdu2026', 'Super Admin', datetime('now'));
 
-CREATE TABLE IF NOT EXISTS activity_logs (
+DROP TABLE IF EXISTS activity_logs;
+CREATE TABLE activity_logs (
   id TEXT PRIMARY KEY,
   actor_id TEXT NOT NULL,
   actor_name TEXT NOT NULL,
@@ -61,7 +66,8 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   timestamp TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS kdu_app_state (
+DROP TABLE IF EXISTS kdu_app_state;
+CREATE TABLE kdu_app_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL

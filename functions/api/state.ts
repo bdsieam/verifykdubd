@@ -35,82 +35,121 @@ const ALLOWED_KEYS = [
   'formSettings',
 ] as const;
 
+async function ensureTableWithColumns(
+  db: D1Database,
+  tableName: string,
+  checkQuery: string,
+  createQuery: string
+): Promise<void> {
+  try {
+    await db.prepare(checkQuery).first();
+  } catch {
+    try {
+      await db.prepare(`DROP TABLE IF EXISTS ${tableName}`).run();
+    } catch {
+      // Ignore drop errors
+    }
+    await db.prepare(createQuery).run();
+  }
+}
+
 async function ensureSchema(db: D1Database): Promise<void> {
-  await db.batch([
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS kdu_app_state (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`
-    ),
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS student_applications (
-        reference_id TEXT PRIMARY KEY,
-        full_name TEXT NOT NULL,
-        student_id TEXT NOT NULL,
-        program TEXT NOT NULL,
-        department TEXT NOT NULL,
-        batch_season TEXT NOT NULL,
-        batch_year TEXT NOT NULL,
-        phone TEXT,
-        facebook_url TEXT,
-        doc_category TEXT,
-        doc_file_name TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        current_step INTEGER NOT NULL DEFAULT 2,
-        reviewed_by TEXT,
-        reviewed_at TEXT,
-        submitted_at TEXT NOT NULL,
-        custom_fields_json TEXT
-      )`
-    ),
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS representatives (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        dept_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        term TEXT NOT NULL,
-        fb_url TEXT,
-        email TEXT,
-        photo_url TEXT,
-        updated_at TEXT NOT NULL
-      )`
-    ),
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS rep_accounts (
-        id TEXT PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        rep_name TEXT,
-        department TEXT,
-        email TEXT,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_by TEXT NOT NULL DEFAULT 'admin',
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-      )`
-    ),
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS admin_credentials (
-        username TEXT PRIMARY KEY,
-        password TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'Admin',
-        updated_at TEXT NOT NULL
-      )`
-    ),
-    db.prepare(
-      `CREATE TABLE IF NOT EXISTS activity_logs (
-        id TEXT PRIMARY KEY,
-        actor_id TEXT NOT NULL,
-        actor_name TEXT NOT NULL,
-        action TEXT NOT NULL,
-        details TEXT NOT NULL,
-        timestamp TEXT NOT NULL
-      )`
-    ),
-  ]);
+  await ensureTableWithColumns(
+    db,
+    'kdu_app_state',
+    'SELECT key, value, updated_at FROM kdu_app_state LIMIT 1',
+    `CREATE TABLE IF NOT EXISTS kdu_app_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`
+  );
+
+  await ensureTableWithColumns(
+    db,
+    'student_applications',
+    'SELECT reference_id, full_name, student_id, program, department, status, submitted_at, custom_fields_json FROM student_applications LIMIT 1',
+    `CREATE TABLE IF NOT EXISTS student_applications (
+      reference_id TEXT PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      program TEXT NOT NULL,
+      department TEXT NOT NULL,
+      batch_season TEXT NOT NULL,
+      batch_year TEXT NOT NULL,
+      phone TEXT,
+      facebook_url TEXT,
+      doc_category TEXT,
+      doc_file_name TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      current_step INTEGER NOT NULL DEFAULT 2,
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      submitted_at TEXT NOT NULL,
+      custom_fields_json TEXT
+    )`
+  );
+
+  await ensureTableWithColumns(
+    db,
+    'representatives',
+    'SELECT id, name, dept_id, role, term, updated_at FROM representatives LIMIT 1',
+    `CREATE TABLE IF NOT EXISTS representatives (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      dept_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      term TEXT NOT NULL,
+      fb_url TEXT,
+      email TEXT,
+      photo_url TEXT,
+      updated_at TEXT NOT NULL
+    )`
+  );
+
+  await ensureTableWithColumns(
+    db,
+    'rep_accounts',
+    'SELECT id, username, password, rep_name, department, status, created_at FROM rep_accounts LIMIT 1',
+    `CREATE TABLE IF NOT EXISTS rep_accounts (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      rep_name TEXT,
+      department TEXT,
+      email TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_by TEXT NOT NULL DEFAULT 'admin',
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    )`
+  );
+
+  await ensureTableWithColumns(
+    db,
+    'admin_credentials',
+    'SELECT username, password, role, updated_at FROM admin_credentials LIMIT 1',
+    `CREATE TABLE IF NOT EXISTS admin_credentials (
+      username TEXT PRIMARY KEY,
+      password TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Admin',
+      updated_at TEXT NOT NULL
+    )`
+  );
+
+  await ensureTableWithColumns(
+    db,
+    'activity_logs',
+    'SELECT id, actor_id, actor_name, action, details, timestamp FROM activity_logs LIMIT 1',
+    `CREATE TABLE IF NOT EXISTS activity_logs (
+      id TEXT PRIMARY KEY,
+      actor_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL,
+      action TEXT NOT NULL,
+      details TEXT NOT NULL,
+      timestamp TEXT NOT NULL
+    )`
+  );
 }
 
 async function syncRelationalTables(
@@ -264,7 +303,11 @@ async function syncRelationalTables(
   }
 
   if (statements.length > 0) {
-    await db.batch(statements);
+    try {
+      await db.batch(statements);
+    } catch {
+      // Non-fatal: relational view sync error should not block primary state save
+    }
   }
 }
 
