@@ -54,13 +54,22 @@ export default defineConfig(() => {
         workbox: {
           importScripts: ['/sw-notifications.js'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          navigateFallback: '/index.html',
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'module',
         },
       }),
     ],
+    base: '/',
+    build: {
+      outDir: 'dist',
+      emptyOutDir: true,
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

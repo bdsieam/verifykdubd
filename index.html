@@ -23,5 +23,28 @@
   <body class="bg-[#F8FAF7] text-[#25352C] antialiased selection:bg-[#006A3D]/20 selection:text-[#006A3D]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          var rawTsxScript = document.querySelector('script[src="/src/main.tsx"]');
+          var viteClient = document.querySelector('script[src*="@vite/client"]');
+          if (root && root.children.length === 0 && rawTsxScript && !viteClient) {
+            root.innerHTML =
+              '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;font-family:sans-serif;background:#F8FAF7;color:#25352C;">' +
+              '<div style="max-width:520px;width:100%;background:#fff;border:1px solid #DCE6DF;border-radius:16px;padding:28px;box-shadow:0 4px 20px rgba(0,0,0,0.05);">' +
+              '<h2 style="margin:0 0 12px;color:#006A3D;font-size:20px;">Cloudflare Build সেটিংস প্রয়োজন</h2>' +
+              '<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#4A5D52;">এই প্রজেক্টটি একটি <b>Vite + React (TypeScript)</b> অ্যাপ। এটি সরাসরি সোর্স ফাইল থেকে রান হয় না—Cloudflare-এ বিল্ড (Build) করে <code>dist</code> ফোল্ডার রান করতে হবে।</p>' +
+              '<div style="background:#F3F7F4;border-radius:12px;padding:16px;font-size:13px;line-height:1.8;margin-bottom:16px;">' +
+              '<div><b>Framework preset:</b> <code>Vite</code></div>' +
+              '<div><b>Build command:</b> <code>npm run build</code></div>' +
+              '<div><b>Build output directory:</b> <code>dist</code></div>' +
+              '</div>' +
+              '<p style="margin:0;font-size:13px;color:#5A6B60;">Cloudflare Pages &rarr; Settings &rarr; Build &amp; deployments-এ গিয়ে উপরের সেটিংস দিয়ে <b>Retry deployment</b> দিন।</p>' +
+              '</div></div>';
+          }
+        }, 1500);
+      });
+    </script>
   </body>
 </html>
