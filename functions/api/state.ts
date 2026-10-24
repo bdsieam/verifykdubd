@@ -36,15 +36,236 @@ const ALLOWED_KEYS = [
 ] as const;
 
 async function ensureSchema(db: D1Database): Promise<void> {
-  await db
-    .prepare(
+  await db.batch([
+    db.prepare(
       `CREATE TABLE IF NOT EXISTS kdu_app_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )`
-    )
-    .run();
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS student_applications (
+        reference_id TEXT PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        program TEXT NOT NULL,
+        department TEXT NOT NULL,
+        batch_season TEXT NOT NULL,
+        batch_year TEXT NOT NULL,
+        phone TEXT,
+        facebook_url TEXT,
+        doc_category TEXT,
+        doc_file_name TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        current_step INTEGER NOT NULL DEFAULT 2,
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        submitted_at TEXT NOT NULL,
+        custom_fields_json TEXT
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS representatives (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        dept_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        term TEXT NOT NULL,
+        fb_url TEXT,
+        email TEXT,
+        photo_url TEXT,
+        updated_at TEXT NOT NULL
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS rep_accounts (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        rep_name TEXT,
+        department TEXT,
+        email TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_by TEXT NOT NULL DEFAULT 'admin',
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS admin_credentials (
+        username TEXT PRIMARY KEY,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'Admin',
+        updated_at TEXT NOT NULL
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS activity_logs (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      )`
+    ),
+  ]);
+}
+
+async function syncRelationalTables(
+  db: D1Database,
+  payload: Record<string, unknown>,
+  now: string
+): Promise<void> {
+  const statements: D1PreparedStatement[] = [];
+
+  // 1. Sync student_applications table
+  if (Array.isArray(payload.applications)) {
+    statements.push(db.prepare('DELETE FROM student_applications'));
+    for (const rawApp of payload.applications) {
+      const app = (rawApp || {}) as Record<string, unknown>;
+      const formData = ((app.formData || {}) as Record<string, unknown>);
+      const doc = ((app.document || {}) as Record<string, unknown>);
+      const customFields = formData.customFieldValues || formData.customValues || {};
+
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO student_applications (
+              reference_id, full_name, student_id, program, department,
+              batch_season, batch_year, phone, facebook_url, doc_category,
+              doc_file_name, status, current_step, reviewed_by, reviewed_at,
+              submitted_at, custom_fields_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            String(app.referenceId || ''),
+            String(formData.fullName || ''),
+            String(formData.studentId || ''),
+            String(formData.program || ''),
+            String(formData.department || ''),
+            String(formData.batchSeason || ''),
+            String(formData.batchYear || ''),
+            String(formData.phone || ''),
+            String(formData.facebookUrl || ''),
+            String(doc.docCategory || ''),
+            String(doc.fileName || ''),
+            String(app.status || 'pending'),
+            Number(app.currentStep || 2),
+            app.reviewedBy ? String(app.reviewedBy) : null,
+            app.reviewedAt ? String(app.reviewedAt) : null,
+            String(app.submittedAt || now),
+            JSON.stringify(customFields)
+          )
+      );
+    }
+  }
+
+  // 2. Sync representatives table
+  if (Array.isArray(payload.representatives)) {
+    statements.push(db.prepare('DELETE FROM representatives'));
+    for (const rawRep of payload.representatives) {
+      const rep = (rawRep || {}) as Record<string, unknown>;
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO representatives (
+              id, name, dept_id, role, term, fb_url, email, photo_url, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            String(rep.id || ''),
+            String(rep.name || ''),
+            String(rep.deptId || ''),
+            String(rep.role || 'Primary'),
+            String(rep.term || ''),
+            String(rep.fbUrl || ''),
+            String(rep.email || ''),
+            rep.photoUrl ? String(rep.photoUrl) : null,
+            now
+          )
+      );
+    }
+  }
+
+  // 3. Sync rep_accounts table
+  if (Array.isArray(payload.accounts)) {
+    statements.push(db.prepare('DELETE FROM rep_accounts'));
+    for (const rawAcc of payload.accounts) {
+      const acc = (rawAcc || {}) as Record<string, unknown>;
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO rep_accounts (
+              id, username, password, rep_name, department, email,
+              status, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            String(acc.id || acc.username || ''),
+            String(acc.username || ''),
+            String(acc.password || ''),
+            String(acc.repName || acc.username || ''),
+            String(acc.department || ''),
+            String(acc.email || ''),
+            String(acc.status || 'active'),
+            String(acc.createdBy || 'admin'),
+            String(acc.createdAt || now),
+            String(acc.updatedAt || now)
+          )
+      );
+    }
+  }
+
+  // 4. Sync admin_credentials table
+  if (payload.adminPasswords && typeof payload.adminPasswords === 'object') {
+    const passwords = payload.adminPasswords as Record<string, string>;
+    for (const [username, password] of Object.entries(passwords)) {
+      const role =
+        username === 'admin' || username === 'superadmin' || username === 'lead'
+          ? 'Super Admin'
+          : 'Representative';
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO admin_credentials (
+              username, password, role, updated_at
+            ) VALUES (?, ?, ?, ?)`
+          )
+          .bind(username, String(password), role, now)
+      );
+    }
+  }
+
+  // 5. Sync activity_logs table
+  if (Array.isArray(payload.activityLogs)) {
+    for (const rawLog of payload.activityLogs.slice(0, 100)) {
+      const log = (rawLog || {}) as Record<string, unknown>;
+      if (log.id) {
+        statements.push(
+          db
+            .prepare(
+              `INSERT OR REPLACE INTO activity_logs (
+                id, actor_id, actor_name, action, details, timestamp
+              ) VALUES (?, ?, ?, ?, ?, ?)`
+            )
+            .bind(
+              String(log.id),
+              String(log.actorId || 'admin'),
+              String(log.actorName || 'Admin'),
+              String(log.action || 'ACTION'),
+              String(log.details || ''),
+              String(log.timestamp || now)
+            )
+        );
+      }
+    }
+  }
+
+  if (statements.length > 0) {
+    await db.batch(statements);
+  }
 }
 
 async function getKeyJson<T>(db: D1Database, key: string, fallback: T): Promise<T> {
@@ -142,6 +363,7 @@ export async function handleApiStateRequest(request: Request, env: Env): Promise
         );
         const updatedApps = [incomingApp, ...filtered];
         await setKeyJson(db, 'applications', updatedApps, now);
+        await syncRelationalTables(db, { applications: updatedApps }, now);
 
         return new Response(
           JSON.stringify({
@@ -175,18 +397,28 @@ export async function handleApiStateRequest(request: Request, env: Env): Promise
         );
         await setKeyJson(db, 'applications', updatedApps, now);
 
+        let updatedLogs: Array<Record<string, unknown>> | undefined;
         if (body.logEntry) {
           const currentLogs = await getKeyJson<Array<Record<string, unknown>>>(
             db,
             'activityLogs',
             []
           );
-          const updatedLogs = [
+          updatedLogs = [
             body.logEntry as Record<string, unknown>,
             ...currentLogs,
           ].slice(0, 500);
           await setKeyJson(db, 'activityLogs', updatedLogs, now);
         }
+
+        await syncRelationalTables(
+          db,
+          {
+            applications: updatedApps,
+            ...(updatedLogs ? { activityLogs: updatedLogs } : {}),
+          },
+          now
+        );
 
         return new Response(
           JSON.stringify({
@@ -199,7 +431,7 @@ export async function handleApiStateRequest(request: Request, env: Env): Promise
         );
       }
 
-      // Standard key-value state sync for allowed collections
+      // Standard key-value state sync for allowed collections + organized SQL table sync
       const statements: D1PreparedStatement[] = [];
       const payload = (body.data && typeof body.data === 'object' ? body.data : body) as Record<
         string,
@@ -225,6 +457,8 @@ export async function handleApiStateRequest(request: Request, env: Env): Promise
       if (statements.length > 0) {
         await db.batch(statements);
       }
+
+      await syncRelationalTables(db, payload, now);
 
       return new Response(
         JSON.stringify({
