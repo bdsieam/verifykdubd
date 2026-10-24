@@ -29,6 +29,12 @@ import {
   playFiveSecondNotificationSound,
 } from './components/VerificationChatHead';
 import { sendSystemPushNotification } from './utils/pwaAndNotifications';
+import {
+  fetchD1State,
+  submitApplicationToD1,
+  reviewApplicationInD1,
+  saveStateToD1,
+} from './utils/d1Database';
 
 const STORAGE_KEY_ADMIN = 'kdu_active_admin_session_prod';
 const STORAGE_KEY_APPLICATIONS = 'kdu_submitted_applications_prod';
@@ -270,6 +276,126 @@ export default function App() {
     }
   }, [activityLogs]);
 
+  // Track known application reference IDs so new remote submissions from Cloudflare D1 trigger Chat Head
+  const knownAppRefs = useRef<Set<string>>(
+    new Set(applications.map((a) => a.referenceId))
+  );
+
+  useEffect(() => {
+    applications.forEach((a) => knownAppRefs.current.add(a.referenceId));
+  }, [applications]);
+
+  // Connect & sync with Cloudflare D1 Database (/api/state) on mount + poll every 8 seconds
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAndSyncFromD1 = async (isInitial: boolean) => {
+      const res = await fetchD1State();
+      if (!isMounted || !res.connected || !res.data) return;
+
+      const d1 = res.data;
+      const hasAnyD1Data = Object.keys(d1).length > 0;
+
+      // If D1 database is newly created and empty, seed initial settings & representatives
+      if (isInitial && !hasAnyD1Data) {
+        let initialPassMap: Record<string, string> = {};
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_PASSWORDS);
+          if (raw) initialPassMap = JSON.parse(raw);
+        } catch {
+          // Ignore
+        }
+        await saveStateToD1({
+          applications,
+          representatives,
+          accounts,
+          adminPasswords: initialPassMap,
+          activityLogs,
+          formSettings,
+        });
+        return;
+      }
+
+      if (Array.isArray(d1.applications)) {
+        // Detect if a brand new pending application arrived from another device
+        if (!isInitial && isAdminLoggedIn) {
+          const newlySubmittedPending = d1.applications.find(
+            (a) =>
+              a.status === 'pending' &&
+              !knownAppRefs.current.has(a.referenceId)
+          );
+          if (newlySubmittedPending) {
+            knownAppRefs.current.add(newlySubmittedPending.referenceId);
+            triggerChatHeadNotification(newlySubmittedPending);
+          }
+        }
+        d1.applications.forEach((a) =>
+          knownAppRefs.current.add(a.referenceId)
+        );
+        setApplications(d1.applications);
+      }
+
+      if (Array.isArray(d1.representatives)) {
+        setRepresentatives(d1.representatives);
+      }
+
+      if (d1.adminPasswords && typeof d1.adminPasswords === 'object') {
+        try {
+          localStorage.setItem(
+            STORAGE_KEY_PASSWORDS,
+            JSON.stringify(d1.adminPasswords)
+          );
+        } catch {
+          // Ignore storage errors
+        }
+      }
+
+      if (Array.isArray(d1.accounts)) {
+        const passMap = d1.adminPasswords || {};
+        const mergedAccounts = d1.accounts.map((acc) => ({
+          ...acc,
+          password: passMap[acc.username] || acc.password || '',
+        }));
+        setAccounts(mergedAccounts);
+        try {
+          localStorage.setItem(
+            STORAGE_KEY_ACCOUNTS,
+            JSON.stringify(mergedAccounts)
+          );
+        } catch {
+          // Ignore storage errors
+        }
+      }
+
+      if (Array.isArray(d1.activityLogs)) {
+        setActivityLogs(d1.activityLogs);
+      }
+
+      if (d1.formSettings && typeof d1.formSettings === 'object') {
+        setFormSettings((prev) => ({ ...prev, ...d1.formSettings }));
+        try {
+          localStorage.setItem(
+            'kdu_form_settings_v1',
+            JSON.stringify(d1.formSettings)
+          );
+        } catch {
+          // Ignore storage errors
+        }
+      }
+    };
+
+    loadAndSyncFromD1(true);
+
+    const intervalId = window.setInterval(() => {
+      loadAndSyncFromD1(false);
+    }, 8000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [isAdminLoggedIn]);
+
   // Form Data
   const [formData, setFormData] = useState<StudentFormData>({
     program: 'Bachelor',
@@ -317,11 +443,19 @@ export default function App() {
         status: 'pending',
         currentStep: 2,
       };
+      knownAppRefs.current.add(newApp.referenceId);
       setApplications((prev) => [newApp, ...prev]);
       setJustSubmittedApp(newApp);
       setIsSubmitting(false);
       setCurrentTab('status');
       setStep(3);
+
+      // Persist new application to Cloudflare D1 Database
+      submitApplicationToD1(newApp).then((remoteApps) => {
+        if (remoteApps) {
+          setApplications(remoteApps);
+        }
+      });
 
       // Reset form inputs so a new form is clean
       setFormData({
@@ -391,7 +525,9 @@ export default function App() {
       currentStep: 2,
     };
 
+    knownAppRefs.current.add(simulatedApp.referenceId);
     setApplications((prev) => [simulatedApp, ...prev]);
+    submitApplicationToD1(simulatedApp);
     triggerChatHeadNotification(simulatedApp);
   };
 
@@ -460,7 +596,20 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
-    setActivityLogs((prev) => [logEntry, ...prev]);
+    const nextLogs = [logEntry, ...activityLogs];
+    setActivityLogs(nextLogs);
+
+    reviewApplicationInD1(
+      referenceId,
+      decision,
+      activeAdmin.username,
+      new Date().toISOString(),
+      logEntry
+    ).then((remoteApps) => {
+      if (remoteApps) {
+        setApplications(remoteApps);
+      }
+    });
   };
 
   const handleTabChange = (tab: string) => {
@@ -493,7 +642,9 @@ export default function App() {
     setActiveAdmin(admin);
     setIsAdminPortalOpen(true);
     setAdminTab('verify_queue');
-    setActivityLogs((prev) => [logEntry, ...prev]);
+    const nextLogs = [logEntry, ...activityLogs];
+    setActivityLogs(nextLogs);
+    saveStateToD1({ activityLogs: nextLogs });
 
     // When a Representative or Admin logs in and there is a pending verification application,
     // pop up the Messenger Chat Head + 5-second notification chime + Push Notification!
@@ -520,7 +671,9 @@ export default function App() {
         details: `অ্যাডমিন পোর্টাল থেকে লগআউট (${activeAdmin.username})`,
         timestamp: new Date().toISOString(),
       };
-      setActivityLogs((prev) => [logoutLog, ...prev]);
+      const nextLogs = [logoutLog, ...activityLogs];
+      setActivityLogs(nextLogs);
+      saveStateToD1({ activityLogs: nextLogs });
     }
     setIsAdminLoggedIn(false);
     setActiveAdmin(null);
@@ -532,8 +685,10 @@ export default function App() {
     newReps: RepresentativeItem[],
     logEntry: ActivityLog
   ) => {
+    const nextLogs = [logEntry, ...activityLogs];
     setRepresentatives(newReps);
-    setActivityLogs((prev) => [logEntry, ...prev]);
+    setActivityLogs(nextLogs);
+    saveStateToD1({ representatives: newReps, activityLogs: nextLogs });
   };
 
   const handleUpdateAccounts = (
@@ -541,6 +696,7 @@ export default function App() {
     logEntry: ActivityLog
   ) => {
     setAccounts(newAccounts);
+    let updatedPassMap: Record<string, string> = {};
     try {
       localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(newAccounts));
       const rawPassMap = localStorage.getItem(STORAGE_KEY_PASSWORDS);
@@ -552,11 +708,30 @@ export default function App() {
           passMap[acc.username] = acc.password;
         }
       });
+      updatedPassMap = passMap;
       localStorage.setItem(STORAGE_KEY_PASSWORDS, JSON.stringify(passMap));
     } catch {
       // Ignore storage errors
     }
-    setActivityLogs((prev) => [logEntry, ...prev]);
+    const nextLogs = [logEntry, ...activityLogs];
+    setActivityLogs(nextLogs);
+    saveStateToD1({
+      accounts: newAccounts,
+      adminPasswords: updatedPassMap,
+      activityLogs: nextLogs,
+    });
+  };
+
+  const handleUpdateAdminPasswords = (
+    passMap: Record<string, string>,
+    logEntry: ActivityLog
+  ) => {
+    const nextLogs = [logEntry, ...activityLogs];
+    setActivityLogs(nextLogs);
+    saveStateToD1({
+      adminPasswords: passMap,
+      activityLogs: nextLogs,
+    });
   };
 
   const handleUpdateFormSettings = (
@@ -569,7 +744,12 @@ export default function App() {
     } catch {
       // Ignore storage errors
     }
-    setActivityLogs((prev) => [logEntry, ...prev]);
+    const nextLogs = [logEntry, ...activityLogs];
+    setActivityLogs(nextLogs);
+    saveStateToD1({
+      formSettings: newSettings,
+      activityLogs: nextLogs,
+    });
   };
 
   return (
@@ -609,6 +789,7 @@ export default function App() {
             activityLogs={activityLogs}
             formSettings={formSettings}
             onUpdateFormSettings={handleUpdateFormSettings}
+            onUpdateAdminPasswords={handleUpdateAdminPasswords}
           />
         ) : (
           <div>

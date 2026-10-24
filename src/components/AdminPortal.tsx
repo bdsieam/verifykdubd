@@ -70,6 +70,10 @@ interface AdminPortalProps {
     newSettings: FormSettings,
     logEntry: ActivityLog
   ) => void;
+  onUpdateAdminPasswords?: (
+    passMap: Record<string, string>,
+    logEntry: ActivityLog
+  ) => void;
 }
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
@@ -89,6 +93,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   activityLogs,
   formSettings,
   onUpdateFormSettings,
+  onUpdateAdminPasswords,
 }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const { isSupported, permission, requestPermission } = usePushNotifications();
@@ -313,6 +318,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       (a) => a.username.toLowerCase() === cleanCurrentUser
     );
 
+    let updatedPassMap: Record<string, string> = {};
     try {
       const raw = localStorage.getItem('kdu_admin_passwords_prod');
       const passMap: Record<string, string> = raw ? JSON.parse(raw) : {};
@@ -325,9 +331,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         return;
       }
       passMap[cleanCurrentUser] = newPassword;
+      updatedPassMap = passMap;
       localStorage.setItem('kdu_admin_passwords_prod', JSON.stringify(passMap));
     } catch {
-      // Ignore storage errors
+      updatedPassMap = { [cleanCurrentUser]: newPassword };
     }
 
     // Sync updated password to Representative Accounts list so Master Admin always sees the latest password
@@ -370,6 +377,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         timestamp: new Date().toISOString(),
       };
       onUpdateAccounts([newRepAcc, ...accounts], log);
+    } else if (onUpdateAdminPasswords) {
+      const log: ActivityLog = {
+        id: `log-${Date.now()}`,
+        actorId: currentAdmin.id,
+        actorName: `${currentAdmin.name} (${currentAdmin.username})`,
+        action: 'ACCOUNT_CREATE',
+        details: `অ্যাডমিন "${currentAdmin.username}" নিজের পাসওয়ার্ড পরিবর্তন করেছেন`,
+        timestamp: new Date().toISOString(),
+      };
+      onUpdateAdminPasswords(updatedPassMap, log);
     }
 
     setOldPassword('');

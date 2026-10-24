@@ -1,8 +1,20 @@
 {
   "name": "kdu-bangla-community",
+  "main": "./worker.ts",
   "compatibility_date": "2025-02-01",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": true
   }
+  // Cloudflare Dashboard থেকে D1 Database Bind করলে নিচের অংশটি আনকমেন্ট করার প্রয়োজন নেই।
+  // আর যদি Wrangler CLI দিয়ে deploy করেন, তবে আপনার D1 Database ID নিচে বসিয়ে আনকমেন্ট করুন:
+  // "d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "kdu-bangla-db",
+  //     "database_id": "YOUR_D1_DATABASE_ID_HERE"
+  //   }
+  // ]
 }
